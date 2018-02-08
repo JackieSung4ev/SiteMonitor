@@ -139,8 +139,13 @@ class MonitorService
                 $interval = $monitor->interval_match;
             }
         } catch (ModelNotFoundException $e) {
-            // 第一次就立刻运行吧
-            $interval = 0;
+	        if ($monitor->is_enable){
+		        // 第一次就立刻运行吧
+		        $interval = 0;
+	        }else{
+	        	// 未启用的，1分钟后再运行。
+		        $interval = 60;
+	        }
         }
 
         $time = Carbon::now()->addSecond($interval);
@@ -157,6 +162,7 @@ class MonitorService
      */
     static public function request(Monitor $monitor)
     {
+	    \MonitorLog::debug("执行HTTP请求，监控ID[{$monitor->id}]");
         $curlHandle = curl_init();
 
         curl_setopt($curlHandle, CURLOPT_SAFE_UPLOAD, true); // 禁止body中使用@上传文件
@@ -193,6 +199,8 @@ class MonitorService
         $curlInfo['response'] = $response;
         $curlInfo['curl_error_no'] = $curlErrorNo;
         $curlInfo['curl_error_message'] = $curlErrorMessage;
+
+	    \MonitorLog::debug("HTTP请求完成，监控ID[{$monitor->id}]");
         return $curlInfo;
     }
 
@@ -237,27 +245,29 @@ class MonitorService
         // 取出上一个快照，判断是否变化，如果没变化，就直接return了
         try {
             /** @var Snapshot $perSnapshot */
-            $perSnapshot = Snapshot::whereMonitorId($snapshot->monitor_id)->where('id', '<', $snapshot->id)->orderBy('id', 'desc')->firstOrFail();
+            $perSnapshot = Snapshot::whereMonitorId($snapshot->monitor_id)->whereIsDone(1)->where('id', '<', $snapshot->id)->orderBy('id', 'desc')->firstOrFail();
             if ($perSnapshot->is_match == $snapshot->is_match && $perSnapshot->is_error == $snapshot->is_error) {
+                // 状态未变，所以不通知
+                $snapshot->is_notice = false;
                 if (!$snapshot->is_match && !$snapshot->is_error) {
                     $snapshot->status_text = "未匹配";
+                    $snapshot->status_level = 0;
                 }else{
                     // 如果匹配状态没变化，且错误状态没变化，就不通知
                     $snapshot->status_text = $perSnapshot->status_text;
+                    $snapshot->status_level = $perSnapshot->status_level;
                 }
-                $snapshot->status_level = 0;
-                $snapshot->is_notice = false;
             }
         } catch (ModelNotFoundException $e) {
             // 如果第一次，且没有匹配也没错误，就不通知
             if (!$snapshot->is_match && !$snapshot->is_error) {
+                $snapshot->is_notice = false;
                 $snapshot->status_text = "New";
                 $snapshot->status_level = 0;
-                $snapshot->is_notice = false;
             }
         }
 
-        if ($snapshot->status_level !== 0){
+        if ($snapshot->is_notice !== false){
             // 就4种状态
             // 常态 - 未匹配
             // 1 错误
@@ -294,7 +304,7 @@ class MonitorService
         }
 
         // 错误则未完成
-        $snapshot->is_done = !$snapshot->is_error;
+        $snapshot->is_done = true;
 	    $snapshot->saveOrFail();
     }
 
@@ -318,15 +328,13 @@ class MonitorService
 		    $monitorData->last_match_time = $nowTime;
 	    }
 
-	    $monitorData->last_request_time = $nowTime;
+	    // 至少30秒更新一次内容，不足30秒不更新
+        if ($monitorData->last_request_time === null || $monitorData->last_request_time->diffInSeconds($nowTime) >= 30){
+            $monitorData->time_total_average_1hour = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subHour(1))->avg('time_total');
+            $monitorData->last_1hour_table_cache = json_encode($monitor->flotData());
+        }
 
-	    $monitorData->time_total_average_15minute = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subMinute(15))->avg('time_total');
-	    $monitorData->time_total_average_30minute = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subMinute(30))->avg('time_total');
-	    $monitorData->time_total_average_1hour = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subHour(1))->avg('time_total');
-	    $monitorData->time_total_average_12hour = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subHour(12))->avg('time_total');
-	    $monitorData->time_total_average_24hour = $monitor->snapshots()->whereIsDone(1)->where('created_at', '>', Carbon::now()->subHour(24))->avg('time_total');
-
-	    $monitorData->last_1hour_table_cache = json_encode($monitor->flotData());
+        $monitorData->last_request_time = $nowTime;
 
 	    $monitorData->saveOrFail();
     }
@@ -337,9 +345,21 @@ class MonitorService
      */
     static public function handleSnapshotNotice(Snapshot $snapshot)
     {
+        if (!$snapshot->is_notice){
+            return;
+        }
+
+        if ($snapshot->monitor->no_notice_error && ($snapshot->status_text == "请求错误" || $snapshot->status_text == "错误恢复")){
+            return ;
+        }
+        if ($snapshot->monitor->no_notice_match && ($snapshot->status_text == "匹配命中" || $snapshot->status_text == "未匹配")){
+            return ;
+        }
+
         /** @var User $user */
         $user = User::findOrFail($snapshot->monitor->project->user_id);
 
-        $snapshot->is_notice && \Mail::to($user)->send(new MonitorNotice($snapshot));
+
+        \Mail::to($user)->send(new MonitorNotice($snapshot));
     }
 }

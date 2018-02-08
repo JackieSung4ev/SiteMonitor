@@ -59,6 +59,7 @@
                         </div>
                     </div>
                 </div>
+
                 <div class="text-right">
                     <a class="btn btn-success" href="{{ route('monitor.create') }}">
                         增加监控
@@ -75,13 +76,21 @@
                 <div class="panel-body">
                     <div class="row">
                         @foreach($project->monitors()->with('data')->get() as $monitor)
+                            <div class="modal fade snapshotModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" id="snapshotModal-{{ $monitor->id }}">
+                                <div class="modal-dialog" role="document">
+                                    <div class="modal-content">
+
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="col-sm-6 col-md-4">
                                 <div class="thumbnail">
                                     <div class="demo-container" data-flot="{{ $monitor->data->last_1hour_table_cache }}">
                                         <div class="demo-placeholder placeholder"></div>
                                     </div>
                                     <p>
-                                        <a class="btn btn-default btn-sm" href="#">
+                                        <a class="btn btn-default btn-sm" href="{{ route('snapshot.index')."?monitor_id=$monitor->id" }}" data-toggle="modal" data-target="#snapshotModal-{{ $monitor->id }}">
                                             快照列表
                                             <span class="glyphicon glyphicon-list" aria-hidden="true"></span>
                                         </a>
@@ -92,11 +101,24 @@
                                     </p>
                                     <h3>{{ $monitor->title }}</h3>
                                     <p>
+                                        @if($monitor->no_notice_error!==false)
+                                            <span class="label label-warning" title="请求错误和错误恢复时，不会发送邮件通知">不通知错误</span>
+                                        @endif
+                                        @if($monitor->no_notice_match!==false)
+                                            <span class="label label-warning" title="命中匹配和恢复未命中时，不会发送邮件通知">不通知匹配</span>
+                                        @endif
+
+                                        @if($monitor->is_public!==false)
+                                            <span class="label label-info">公开监控</span>
+                                        @endif
                                         @if($monitor->is_enable===false)
                                             <span class="label label-warning">已停用</span>
                                         @endif
                                         <span class="label label-{{ $monitor->data->lastStatusLevelLabel() }}">{{ $monitor->data->last_status_text }}</span>
-                                        {{ $monitor->request_url }}</p>
+                                    </p>
+                                    <p>
+                                        <a target="_blank" href="{{ $monitor->request_url }}">{{ str_limit($monitor->request_url,30) }}</a>
+                                    </p>
                                     <ul class="list-unstyled">
                                         <li><label>请求间隔：</label> {{ $monitor->interval_normal }} 秒</li>
                                         <li>
@@ -136,6 +158,14 @@
 @section('foot')
     <script src="https://cdn.bootcss.com/flot/0.8.3/jquery.flot.min.js"></script>
     <script src="https://cdn.bootcss.com/flot/0.8.3/jquery.flot.time.min.js"></script>
+
+
+    <script>
+        $(document).on("click", '.snapshotModal .pagination a', function(event){
+            $(this).parents(".modal-content").load($(this).attr("href"));
+            event.preventDefault();
+        });
+    </script>
 
     <script type="text/javascript">
         $("<div id='tooltip'></div>").css({

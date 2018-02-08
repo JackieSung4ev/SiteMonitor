@@ -61,6 +61,22 @@ class Snapshot extends Model
 
     protected $fillable = ['monitor_id'];
 
+    /**
+     * 显示用的、
+     * @return mixed
+     */
+    public function getLabel(){
+        $arr = [
+            "primary",
+            "warning",
+            "danger",
+        ];
+        return $arr[$this->status_level];
+    }
+
+    /**
+     * 快照所属的监控
+     */
     public function monitor()
     {
         return $this->belongsTo('App\Monitor');
@@ -74,6 +90,10 @@ class Snapshot extends Model
      * @throws \Exception
      */
     public function storeSnapshotResponse($userId, $response){
+        if (empty($response)){
+            return "";
+        }
+
         $date = date('Y-m-d');
         $path = "/$userId/{$this->monitor_id}/$date/{$this->id}.bin";
         if (!\Storage::disk('snapshot')->put($path, $response)){
@@ -87,7 +107,7 @@ class Snapshot extends Model
      * @throws \Exception
      */
     public function deleteResponseFile(){
-        if (!\Storage::disk('snapshot')->delete($this->response_path)){
+        if (!empty($this->response_path) && !\Storage::disk('snapshot')->delete($this->response_path)){
             throw new \Exception("Delete a file {$this->response_path} return false !");
         }
     }
@@ -102,8 +122,7 @@ class Snapshot extends Model
     }
 
     /**
-     *
-     * @return string
+     * @return bool|string
      */
     public function getHeaderStr()
     {
@@ -112,8 +131,7 @@ class Snapshot extends Model
     }
 
     /**
-     *
-     * @return string
+     * @return bool|string
      */
     public function getBody()
     {
